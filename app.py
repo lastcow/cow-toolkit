@@ -171,6 +171,8 @@ class CanvasCommandCenter(App):
         Binding("r",         "reload",            "Reload"),
         Binding("s",         "load_submissions",  "Submissions"),
         Binding("i",         "grade_all",         "AI Grade All"),
+        Binding("g",         "regrade_one",       "Regrade",       show=False),
+        Binding("shift+r",   "regrade_all",       "Regrade All",   show=False),
         Binding("y",         "confirm_grades",    "Confirm Submit", show=False),
         Binding("n",         "cancel_grades",     "Cancel",        show=False),
         Binding("e",         "edit_grade",        "Edit Grade",    show=False),
@@ -226,7 +228,7 @@ class CanvasCommandCenter(App):
         yield Static(
             " [1] Courses  [2] Students  [3] Assignments  [4] Submissions"
             "  │  [↑↓] Navigate  [Enter] Select"
-            "  │  [i] AI Grade All  [s] Subs  [r] Reload  [q] Quit",
+            "  │  [i] AI Grade  [g] Regrade  [R] Regrade All  [s] Subs  [r] Reload  [q] Quit",
             id="key-bar"
         )
 
@@ -374,8 +376,10 @@ class CanvasCommandCenter(App):
     def _populate_submissions(self, subs: list, assign_name: str) -> None:
         tbl = self.query_one("#tbl-submissions", DataTable)
         tbl.clear()
+        resubmit_count = sum(1 for s in subs if s.get("resubmitted"))
+        resub_note = f"  🔄 {resubmit_count} resubmitted" if resubmit_count else ""
         self.query_one("#title-submissions", Label).update(
-            f" 🗂 SUBMISSIONS [4] — {assign_name[:36]} ({len(subs)}) "
+            f" 🗂 SUBMISSIONS [4] — {assign_name[:30]} ({len(subs)}){resub_note} "
         )
         if not subs:
             tbl.add_row("No submissions yet", "—", "—", "—")
@@ -384,14 +388,19 @@ class CanvasCommandCenter(App):
             info  = format_submission(s)
             name  = info.get("student") or s.get("user_name") or "?"
             atts  = s.get("attachments") or []
-            if atts:
-                att_label = f"📎 {len(atts)} file{'s' if len(atts) > 1 else ''}"
+            att_label = f"📎 {len(atts)}" if atts else "—"
+
+            # Resubmission flag and attempt number
+            attempt = s.get("attempt") or 1
+            if s.get("resubmitted"):
+                state_label = f"[bold yellow]🔄 resub #{attempt}[/]"
             else:
-                att_label = "—"
+                state_label = info.get("status", "—")[:14]
+
             tbl.add_row(
                 name[:24],
                 (info.get("submitted_at") or "—")[:16],
-                info.get("status", "—")[:14],
+                state_label,
                 str(info.get("score") or "—"),
                 att_label,
                 key=str(s.get("user_id", name))
@@ -484,9 +493,16 @@ class CanvasCommandCenter(App):
         status: str, score: str, body: str, atts: list
     ) -> None:
         """Download & parse attachments, then render full detail."""
+        attempt    = sub.get("attempt") or 1
+        graded_at  = (sub.get("graded_at") or "")[:16]
+        resubmit   = sub.get("resubmitted", False)
+        resub_flag = "  [bold yellow]🔄 RESUBMITTED — needs regrade[/]" if resubmit else ""
+
         lines = [
-            f"[bold cyan]Student:[/]    {name}",
-            f"[bold cyan]Submitted:[/]  {subat}",
+            f"[bold cyan]Student:[/]    {name}{resub_flag}",
+            f"[bold cyan]Submitted:[/]  {subat}"
+            + (f"  [dim](attempt #{attempt})[/]" if attempt > 1 else ""),
+            f"[bold cyan]Graded at:[/]  {graded_at or '—'}",
             f"[bold cyan]Status:[/]     {status}",
             f"[bold cyan]Score:[/]      {score}",
             f"[bold cyan]Files:[/]      {len(atts)} attachment(s)",
@@ -658,8 +674,12 @@ class CanvasCommandCenter(App):
 
     @work(thread=True)
     def grade_all_worker(self, course_id: int,
-                         assign_id: int, assign_name: str) -> None:
-        """Fetch requirements, grade every submission, then show results."""
+                         assign_id: int, assign_name: str,
+                         force_all: bool = False) -> None:
+        """Fetch requirements, grade every submission, then show results.
+
+        force_all=True bypasses the skip-already-graded filter (for regrade-all).
+        """
         cache = getattr(self, "_submissions_cache", {})
 
         # ── Step 1: Fetch requirements ────────────────────────────────
@@ -695,23 +715,35 @@ class CanvasCommandCenter(App):
             or s.get("body")
             or s.get("attachments")
         ]
-        # Grade submitted ones; skip already-graded (score already posted)
+        # Grade submitted ones; skip already-graded unless force_all
         subs_to_grade = list(cache.values())
         already_graded = [
             s for s in subs_to_grade
-            if s.get("workflow_state") == "graded" and s.get("score") is not None
+            if s.get("workflow_state") == "graded"
+            and s.get("score") is not None
+            and not s.get("resubmitted")   # don't count resubmissions as "already done"
         ]
-        submitted_only = [
-            s for s in subs_to_grade
-            if (
-                s.get("workflow_state") not in ("unsubmitted", None, "")
+        if force_all:
+            # Regrade all — include already-graded and resubmissions
+            submitted_only = [
+                s for s in subs_to_grade
+                if s.get("workflow_state") not in ("unsubmitted", None, "")
                 or s.get("body") or s.get("attachments")
-            )
-            and not (
-                s.get("workflow_state") == "graded"
-                and s.get("score") is not None
-            )
-        ]
+            ]
+        else:
+            # Normal grade-all: skip already-graded (but resubmissions still get graded)
+            submitted_only = [
+                s for s in subs_to_grade
+                if (
+                    s.get("workflow_state") not in ("unsubmitted", None, "")
+                    or s.get("body") or s.get("attachments")
+                )
+                and not (
+                    s.get("workflow_state") == "graded"
+                    and s.get("score") is not None
+                    and not s.get("resubmitted")
+                )
+            ]
 
         total = len(submitted_only)
         skipped = len(already_graded)
@@ -980,6 +1012,136 @@ class CanvasCommandCenter(App):
         self._pending_grades = []
         self._clear_detail("Grade submission cancelled.")
         self._status("❌ Grade submission cancelled")
+
+    # ── regrade actions ───────────────────────────────────────────────────
+
+    def action_regrade_one(self) -> None:
+        """[g] AI-regrade the currently selected submission."""
+        if not self.selected_course_id or not self.selected_assign_id:
+            self._status("⚠️  Select a course → assignment → submission first")
+            return
+        tbl = self.query_one("#tbl-submissions", DataTable)
+        if tbl.cursor_row < 0:
+            self._status("⚠️  No submission selected in the Submissions panel")
+            return
+        try:
+            row_keys = list(tbl.rows.keys())
+            uid = str(row_keys[tbl.cursor_row].value)
+        except (IndexError, AttributeError):
+            self._status("⚠️  Could not identify selected submission row")
+            return
+        cache = getattr(self, "_submissions_cache", {})
+        sub   = cache.get(uid)
+        if sub is None:
+            self._status(f"⚠️  Submission not found in cache (uid={uid})")
+            return
+        self._regrade_one_worker(sub)
+
+    def action_regrade_all(self) -> None:
+        """[R] Force-regrade ALL submissions including already graded (handles resubmissions)."""
+        if not self.selected_course_id or not self.selected_assign_id:
+            self._status("⚠️  Select a course → assignment first")
+            return
+        cache = getattr(self, "_submissions_cache", {})
+        if not cache:
+            self._status("⚠️  No submissions loaded. Load submissions first [s]")
+            return
+        self._grading_mode   = False
+        self._pending_grades = []
+        self.grade_all_worker(
+            self.selected_course_id,
+            self.selected_assign_id,
+            self.selected_assign_name,
+            force_all=True,      # bypass skip-already-graded filter
+        )
+
+    @work(thread=True)
+    def _regrade_one_worker(self, sub: dict) -> None:
+        """Fetch requirements, grade one submission, show result."""
+        name    = sub.get("user_name") or "Unknown"
+        attempt = sub.get("attempt") or 1
+
+        self.call_from_thread(
+            self.query_one("#title-detail", Label).update,
+            f" 🔄 REGRADING — {name} (attempt #{attempt}) "
+        )
+        self.call_from_thread(
+            self.query_one("#detail-content", Static).update,
+            f"[bold cyan]Fetching requirements and regrading {name}…[/]"
+        )
+        self._status(f"🔄 Regrading {name}…")
+
+        try:
+            req = get_assignment_requirements(
+                self.canvas, self.selected_course_id, self.selected_assign_id
+            )
+        except Exception as e:
+            self.call_from_thread(
+                self.query_one("#detail-content", Static).update,
+                f"[red]❌ Failed to fetch requirements: {e}[/]"
+            )
+            return
+
+        pts = req["points_possible"]
+
+        # Build submission text
+        text_parts = []
+        if sub.get("body"):
+            text_parts.append(sub["body"])
+        for att_meta in (sub.get("attachments") or []):
+            att_obj = att_meta.get("_att_obj")
+            if att_obj:
+                fetched = fetch_attachment_content(att_obj)
+                if fetched.get("text"):
+                    text_parts.append(
+                        f"[File: {att_meta['filename']}]\n" + fetched["text"]
+                    )
+        full_text = "\n\n".join(text_parts)
+
+        result = grade_one_submission(req, name, full_text)
+
+        score_str = f"{result['score']:.0f}/{pts:.0f}"
+        color     = _grade_color(result["letter_grade"])
+        lines = [
+            f"[bold cyan]🔄 REGRADE RESULT — {name} (attempt #{attempt})[/]",
+            f"[bold cyan]──────────────────────────────────────────[/]",
+            f"[bold cyan]Score:[/]    [{color}]{score_str}[/]",
+            f"[bold cyan]Grade:[/]    [{color}]{result['letter_grade']}[/]",
+            f"[bold cyan]Comment:[/]  [italic #aaaaaa]{result['comments'] or '—'}[/]",
+            "",
+        ]
+        if result["error"]:
+            lines.append(f"[red]⚠ Error: {result['error']}[/]")
+        else:
+            lines.append(
+                "  [bold bright_green on #003300][ y ][/] submit this grade   "
+                "[bold bright_red on #330000][ n ][/] cancel"
+            )
+
+        self._pending_grades = [{
+            "user_id":      sub.get("user_id"),
+            "student_name": name,
+            "score":        result["score"],
+            "letter_grade": result["letter_grade"],
+            "comments":     result["comments"],
+            "error":        result["error"],
+            "state":        sub.get("workflow_state", ""),
+        }]
+        self._grading_mode = True
+
+        self.call_from_thread(
+            self.query_one("#detail-content", Static).update,
+            "\n".join(lines)
+        )
+        self.call_from_thread(
+            self.query_one("#title-detail", Label).update,
+            f" 🔄 REGRADE — {name} ── [y] Submit  [n] Cancel "
+        )
+        self.call_from_thread(
+            self._status,
+            f"🔄 Regrade ready: {name}  {score_str}  {result['letter_grade']}"
+            "  │  [y] Submit  [n] Cancel"
+        )
 
     # ── grade editing ─────────────────────────────────────────────────────
 

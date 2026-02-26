@@ -63,12 +63,24 @@ def list_submissions(canvas: Canvas, course_id: int,
             if text:
                 comments_list.append({"author": author, "text": text, "date": date})
 
+        submitted_at = getattr(sub, "submitted_at", None)
+        graded_at    = getattr(sub, "graded_at", None)
+        attempt      = getattr(sub, "attempt", None) or 1
+
+        # Resubmitted = submitted again after being graded
+        resubmitted  = bool(
+            submitted_at and graded_at and submitted_at > graded_at
+        )
+
         result.append({
             "id":            sub.id,
             "user_id":       sub.user_id,
             "user_name":     user_info.get("name", "Unknown"),
             "body":          body,
-            "submitted_at":  getattr(sub, "submitted_at", None),
+            "submitted_at":  submitted_at,
+            "graded_at":     graded_at,
+            "attempt":       attempt,
+            "resubmitted":   resubmitted,
             "workflow_state": getattr(sub, "workflow_state", "unsubmitted"),
             "score":         getattr(sub, "score", None),
             "attachments":   att_summaries,

@@ -14,7 +14,7 @@ from src.grading import list_submissions, calculate_grade, format_submission
 def _make_mock_submission(submission_id, user_id, body="Some answer",
                           submitted_at="2025-11-01T10:00:00Z",
                           workflow_state="submitted", score=None,
-                          user_name="Jane Doe"):
+                          user_name="Jane Doe", graded_at=None, attempt=1):
     """Helper to create a mock Canvas submission object."""
     sub = MagicMock()
     sub.id = submission_id
@@ -23,7 +23,8 @@ def _make_mock_submission(submission_id, user_id, body="Some answer",
     sub.submitted_at = submitted_at
     sub.workflow_state = workflow_state
     sub.score = score
-
+    sub.graded_at = graded_at
+    sub.attempt = attempt
     sub.user = {"id": user_id, "name": user_name}
     return sub
 
@@ -90,6 +91,10 @@ class TestListSubmissions:
         assert s["workflow_state"] == "submitted"
         assert s["score"] is None
         assert s["user_name"] == "Alice"
+        assert "attempt" in s
+        assert "graded_at" in s
+        assert "resubmitted" in s
+        assert s["resubmitted"] is False  # not graded yet
 
     def test_returns_empty_list_when_no_submissions(self):
         mock_canvas = MagicMock()
