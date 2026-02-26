@@ -170,8 +170,10 @@ class TestFormatStudentGrade:
         result = format_student_grade(student)
         assert result["name"] == "Alice Smith"
         assert result["sortable_name"] == "Smith, Alice"
-        assert result["current"] == "95.0% (A)"
-        assert result["final"] == "92.0% (A-)"
+        assert result["current_grade"] == "A"
+        assert result["current_score"] == "95.0%"
+        assert result["final_grade"] == "A-"
+        assert result["final_score"] == "92.0%"
 
     def test_formats_student_with_no_current_grade(self):
         student = {
@@ -184,8 +186,10 @@ class TestFormatStudentGrade:
             "final_grade": "B-",
         }
         result = format_student_grade(student)
-        assert result["current"] == "N/A"
-        assert result["final"] == "80.0% (B-)"
+        assert result["current_grade"] is None
+        assert result["current_score"] is None
+        assert result["final_grade"] == "B-"
+        assert result["final_score"] == "80.0%"
 
     def test_formats_student_with_no_final_grade(self):
         student = {
@@ -198,8 +202,10 @@ class TestFormatStudentGrade:
             "final_grade": None,
         }
         result = format_student_grade(student)
-        assert result["current"] == "88.0% (B+)"
-        assert result["final"] == "N/A"
+        assert result["current_grade"] == "B+"
+        assert result["current_score"] == "88.0%"
+        assert result["final_grade"] is None
+        assert result["final_score"] is None
 
     def test_formats_student_with_no_grades_at_all(self):
         student = {
@@ -212,8 +218,10 @@ class TestFormatStudentGrade:
             "final_grade": None,
         }
         result = format_student_grade(student)
-        assert result["current"] == "N/A"
-        assert result["final"] == "N/A"
+        assert result["current_grade"] is None
+        assert result["current_score"] is None
+        assert result["final_grade"] is None
+        assert result["final_score"] is None
 
     def test_formats_score_with_no_letter_grade(self):
         """Score exists but letter grade is None (pass/fail courses)."""
@@ -227,8 +235,10 @@ class TestFormatStudentGrade:
             "final_grade": None,
         }
         result = format_student_grade(student)
-        assert result["current"] == "75.0%"
-        assert result["final"] == "70.0%"
+        assert result["current_score"] == "75.0%"
+        assert result["current_grade"] is None
+        assert result["final_score"] == "70.0%"
+        assert result["final_grade"] is None
 
     def test_includes_user_id(self):
         student = {

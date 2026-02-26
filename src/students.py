@@ -20,7 +20,7 @@ def get_students(canvas: Canvas, course_id: int) -> list:
         course = canvas.get_course(course_id)
         enrollments = list(course.get_enrollments(
             type=["StudentEnrollment"],
-            include=["current_points"],
+            include=["current_points", "grades"],
         ))
     except Exception as e:
         raise RuntimeError(f"Failed to fetch students for course {course_id}: {e}") from e
@@ -46,19 +46,24 @@ def get_students(canvas: Canvas, course_id: int) -> list:
 def format_student_grade(student: dict) -> dict:
     """Format a student's grade data for display.
 
-    Returns dict with keys: user_id, name, sortable_name, current, final.
+    Returns dict with keys:
+        user_id, name, sortable_name,
+        current_grade, current_score, final_grade, final_score.
     """
-    def _fmt_grade(score, letter):
+    def _fmt_score(score):
         if score is None:
-            return "N/A"
-        if letter is not None:
-            return f"{score}% ({letter})"
-        return f"{score}%"
+            return None
+        try:
+            return f"{float(score):.1f}%"
+        except (TypeError, ValueError):
+            return str(score)
 
     return {
-        "user_id": student["user_id"],
-        "name": student["name"],
+        "user_id":       student["user_id"],
+        "name":          student["name"],
         "sortable_name": student["sortable_name"],
-        "current": _fmt_grade(student["current_score"], student["current_grade"]),
-        "final": _fmt_grade(student["final_score"], student["final_grade"]),
+        "current_grade": student.get("current_grade"),
+        "current_score": _fmt_score(student.get("current_score")),
+        "final_grade":   student.get("final_grade"),
+        "final_score":   _fmt_score(student.get("final_score")),
     }
