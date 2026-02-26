@@ -9,10 +9,12 @@ Flow:
 """
 
 import json
+import os
 import re
 import subprocess
 from html.parser import HTMLParser
 
+import requests
 from canvasapi import Canvas
 
 
@@ -38,6 +40,73 @@ def strip_html(html: str) -> str:
     return s.get_text()
 
 
+# ── Extract links from HTML ───────────────────────────────────────────────────
+
+class _LinkExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.links: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            for name, val in attrs:
+                if name == "href" and val:
+                    self.links.append(val)
+
+
+def _extract_links(html: str) -> list[str]:
+    """Return all href values from <a> tags in the HTML."""
+    p = _LinkExtractor()
+    p.feed(html or "")
+    seen, result = set(), []
+    for href in p.links:
+        href = href.strip()
+        if not href or href.startswith(("#", "mailto:", "javascript:")):
+            continue
+        if href not in seen:
+            seen.add(href)
+            result.append(href)
+    return result
+
+
+# ── Fetch content from a linked page ─────────────────────────────────────────
+
+def _fetch_link_content(url: str, canvas_token: str = "",
+                        max_chars: int = 3000) -> str:
+    """Fetch and extract text content from a URL.
+
+    Uses the Canvas API token for frostburg.instructure.com URLs.
+    Returns extracted text or empty string on failure.
+    """
+    try:
+        headers = {"User-Agent": "CanvasTUI/1.0"}
+        if "instructure.com" in url or "canvas" in url.lower():
+            if canvas_token:
+                headers["Authorization"] = f"Bearer {canvas_token}"
+
+        resp = requests.get(url, headers=headers, timeout=10,
+                            allow_redirects=True)
+        if resp.status_code != 200:
+            return ""
+
+        ctype = resp.headers.get("content-type", "")
+        if "html" in ctype:
+            text = strip_html(resp.text)
+        elif "text" in ctype:
+            text = resp.text.strip()
+        else:
+            return ""   # skip binary (pdf, images, etc.)
+
+        # Normalise whitespace and cap length
+        text = re.sub(r"\s{3,}", "\n\n", text).strip()
+        if len(text) > max_chars:
+            text = text[:max_chars] + "…"
+        return text
+
+    except Exception:
+        return ""
+
+
 # ── Fetch assignment requirements ────────────────────────────────────────────
 
 def get_assignment_requirements(canvas: Canvas, course_id: int,
@@ -60,6 +129,18 @@ def get_assignment_requirements(canvas: Canvas, course_id: int,
     raw_desc    = getattr(assignment, "description", "") or ""
     description = strip_html(raw_desc)
     points      = float(getattr(assignment, "points_possible", 100) or 100)
+
+    # ── Follow links in description and append their content ─────────
+    canvas_token = os.environ.get("CANVAS_API_TOKEN", "")
+    linked_sections: list[str] = []
+    links = _extract_links(raw_desc)
+    for url in links[:5]:   # cap at 5 links to avoid runaway fetching
+        content = _fetch_link_content(url, canvas_token=canvas_token)
+        if content and len(content) > 40:   # skip trivially short pages
+            linked_sections.append(f"[Linked page: {url}]\n{content}")
+
+    if linked_sections:
+        description = description + "\n\n" + "\n\n".join(linked_sections)
 
     # Optional rubric
     rubric_text = ""
