@@ -25,7 +25,7 @@ def list_submissions(canvas: Canvas, course_id: int,
     try:
         course = canvas.get_course(course_id)
         assignment = course.get_assignment(assignment_id)
-        submissions = list(assignment.get_submissions())
+        submissions = list(assignment.get_submissions(include=["user", "submission_comments"]))
     except Exception as e:
         raise RuntimeError(
             f"Failed to fetch submissions for assignment {assignment_id} "
@@ -34,17 +34,45 @@ def list_submissions(canvas: Canvas, course_id: int,
 
     result = []
     for sub in submissions:
-        user_info = getattr(sub, "user", None) or {}
-        body = getattr(sub, "body", None) or ""
+        user_info  = getattr(sub, "user", None) or {}
+        body       = getattr(sub, "body", None) or ""
+        raw_atts   = getattr(sub, "attachments", None) or []
+
+        # Summarise attachments (keep the raw objects for later download)
+        att_summaries = []
+        for att in raw_atts:
+            att_summaries.append({
+                "filename":     getattr(att, "filename", "unknown"),
+                "content_type": getattr(att, "content-type", ""),
+                "size":         getattr(att, "size", 0),
+                "_att_obj":     att,   # keep raw object for download
+            })
+
+        # Extract submission comments (grader feedback)
+        raw_comments = getattr(sub, "submission_comments", None) or []
+        comments_list = []
+        for c in raw_comments:
+            if isinstance(c, dict):
+                author = c.get("author_name", "?")
+                text   = c.get("comment", "")
+                date   = (c.get("created_at") or "")[:10]
+            else:
+                author = getattr(c, "author_name", "?")
+                text   = getattr(c, "comment", "")
+                date   = (getattr(c, "created_at", "") or "")[:10]
+            if text:
+                comments_list.append({"author": author, "text": text, "date": date})
 
         result.append({
-            "id": sub.id,
-            "user_id": sub.user_id,
-            "user_name": user_info.get("name", "Unknown"),
-            "body": body,
-            "submitted_at": getattr(sub, "submitted_at", None),
+            "id":            sub.id,
+            "user_id":       sub.user_id,
+            "user_name":     user_info.get("name", "Unknown"),
+            "body":          body,
+            "submitted_at":  getattr(sub, "submitted_at", None),
             "workflow_state": getattr(sub, "workflow_state", "unsubmitted"),
-            "score": getattr(sub, "score", None),
+            "score":         getattr(sub, "score", None),
+            "attachments":   att_summaries,
+            "submission_comments": comments_list,
         })
 
     return result

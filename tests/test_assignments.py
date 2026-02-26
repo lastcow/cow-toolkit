@@ -137,6 +137,32 @@ class TestListAssignments:
         with pytest.raises(RuntimeError, match="Failed to fetch assignments"):
             list_assignments(mock_canvas, 1001)
 
+    def test_includes_needs_grading_count(self):
+        """Returned dicts should include needs_grading_count."""
+        mock_canvas = MagicMock()
+        mock_course = MagicMock()
+        mock_canvas.get_course.return_value = mock_course
+
+        assignment = _make_mock_assignment(1, "HW1", 100)
+        assignment.needs_grading_count = 5
+        mock_course.get_assignments.return_value = [assignment]
+
+        result = list_assignments(mock_canvas, 1001)
+        assert result[0]["needs_grading_count"] == 5
+
+    def test_needs_grading_count_defaults_to_zero(self):
+        """Missing needs_grading_count should default to 0."""
+        mock_canvas = MagicMock()
+        mock_course = MagicMock()
+        mock_canvas.get_course.return_value = mock_course
+
+        assignment = _make_mock_assignment(1, "HW1", 100)
+        del assignment.needs_grading_count
+        mock_course.get_assignments.return_value = [assignment]
+
+        result = list_assignments(mock_canvas, 1001)
+        assert result[0]["needs_grading_count"] == 0
+
 
 class TestCreateAssignment:
     """Tests for creating a new assignment in a course."""

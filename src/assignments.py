@@ -33,6 +33,7 @@ def list_assignments(canvas: Canvas, course_id: int) -> list:
             "description": getattr(a, "description", None) or "",
             "submission_types": getattr(a, "submission_types", []),
             "published": getattr(a, "published", False),
+            "needs_grading_count": getattr(a, "needs_grading_count", 0) or 0,
         })
 
     return result
