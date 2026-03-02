@@ -192,7 +192,7 @@ def grade_one_submission(
     points = req["points_possible"]
     desc   = (req["description"] or "")[:2500]
     rubric = req["rubric_text"] or ""
-    text   = (submission_text or "")[:4000]
+    text   = strip_html(submission_text or "")[:8000]
 
     if rubric:
         scoring_section = f"""RUBRIC (use these criteria — they define the score breakdown):
